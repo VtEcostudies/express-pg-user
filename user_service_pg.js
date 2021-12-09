@@ -12,7 +12,7 @@ module.exports = {
 //    getColumns,
     getAll,
     getPage,
-    getById,
+    getByUserId,
     getByUserName,
     getRoles,
     register,
@@ -47,9 +47,11 @@ Originally, we filtered user selection to 'where token is null'. However, this
 did not allow us to return users whose status is not confirmed, which prevents
 us from returning an instructive error.
 */
-async function authenticate(body) {
-    if (!body.username || !body.password) {throw 'Username and password are required.';}
+async function authenticate(req) {
+    body = req.body;
+    if (!req.body.token && req.cookies) {req.body.token = req.cookies['reset'];}
     return new Promise(async (resolve, reject) => {
+        if (!body.username || !body.password) {reject(new Error('Username and password are required.'));}
         var token = null; //authentiction token. return if successful login.
         var select = `select * from users where username=$1;`;
         var args = [body.username];
@@ -64,7 +66,9 @@ async function authenticate(body) {
         if (user && bcrypt.compareSync(body.password, user.hash)) {
             if (user.status=='confirmed' || body.token) { //confirmed, registration token and new_email token
               delete user.hash; //never return hash via API
-              token = jwt.sign({ sub: user.userId, role: user.userrole }, secrets.token.secret, { expiresIn: secrets.token.loginExpiry });
+              delete user.token;
+              //token = jwt.sign({ sub: user.userId, username: user.username, role: user.userrole }, secrets.token.secret, { expiresIn: secrets.token.loginExpiry });
+              token = jwt.sign(user, secrets.token.secret, { expiresIn: secrets.token.loginExpiry });
               if (body.token) {
                 console.log(update, args);
                 var update = `update users set token=null,status='confirmed' where username=$1 and token=$2 returning *;`;
@@ -89,14 +93,14 @@ async function authenticate(body) {
                 case 'invalid':
                   message = 'This user is invalid. Please contact a VPAtlas administrator.';
                   break;
-            }
-              reject (message);
+                }
+              reject(new Error(message));
             }
         } else {
             if (token) {
-              reject ('Invalid token.');
+              reject(new Error('Invalid token.'));
             } else {
-              reject ('Username or password is incorrect.');
+              reject(new Error('Username or password is incorrect.'));
             }
         }
     });
@@ -151,18 +155,18 @@ async function getPage(page, params={}) {
  * It does appear that await is meant to be used with the old-school try {}
  * catch {} formulation.
  */
-async function getById(id) {
+async function getByUserId(userId) {
     try {
-        var res = await query(`select * from users where "id"=$1;`, [id]);
+        var res = await query(`select * from users where "userId"=$1;`, [userId]);
         if (res.rowCount == 1) {
             delete res.rows[0].hash;
             return res.rows[0];
         } else {
-            console.log(`users.service.pg.js::getByID ${id} NOT Found`);
+            console.log(`users.service.pg.js::getByUserId ${userId} NOT Found`);
             return {};
         }
     } catch(err) {
-        console.log(`users.service.pg.js::getByID error`, err);
+        console.log(`users.service.pg.js::getByUserId error`, err);
         throw err;
     }
 }
@@ -174,11 +178,11 @@ async function getByUserName(username) {
             delete res.rows[0].hash;
             return res.rows[0];
         } else {
-            console.log(`users.service.pg.js::getByID ${id} NOT Found`);
+            console.log(`users.service.pg.js::getByUserId ${id} NOT Found`);
             return {};
         }
     } catch(err) {
-        console.log(`users.service.pg.js::getByID error`, err);
+        console.log(`users.service.pg.js::getByUserId error`, err);
         throw err;
     }
 }
@@ -262,7 +266,7 @@ async function update(id, body, user) {
       table, alias. A database TRIGGER handles those insert/updates in postgres.
     */
     const queryColumns = pgUtil.parseColumns(body, 2, [id], [], 'users');
-    const text = `update users set (${queryColumns.named}) = (${queryColumns.numbered}) where "id"=$1;`;
+    const text = `update users set (${queryColumns.named}) = (${queryColumns.numbered}) where "userId"=$1;`;
     console.log(text, queryColumns.values);
     return await query(text, queryColumns.values);
 }
@@ -370,7 +374,7 @@ function verify(token) {
           console.log(res.rows[0]);
           if (res.rows[0]) {
             delete res.rows[0].hash; //remove password hash for security
-            delete res.rows[0].token; //ditto
+            //delete res.rows[0].token; //Don't delete this. It was provided, it matched, and we need it downstream for the password reset flow.
             resolve(res.rows[0]);
           } else {
             reject(new Error('Cannot verify. User email/token NOT found.'))
@@ -384,7 +388,7 @@ function verify(token) {
 }
 
 /*
-  Confirm a passowrd reset by verifying a user from the token and an email parsed
+  Confirm a password reset by verifying a user from the token and an email parsed
   from the incoming token. If that combination is verified, update the user's
   password.
 */

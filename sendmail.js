@@ -3,18 +3,19 @@ const config = require('../config').config;
 const secrets = require('../secrets').secrets;
 
 module.exports = {
-    register: (userMail, token, hostname) => reset(userMail, token, hostname, 'registration'),
-    reset: (userMail, token, hostname) => reset(userMail, token, hostname, 'reset'),
-    new_email: (userMail, token, hostname) => reset(userMail, token, hostname, 'email')
+    register: (userMail, token, protHost) => reset(userMail, token, protHost, 'registration'),
+    reset: (userMail, token, protHost) => reset(userMail, token, protHost, 'reset'),
+    new_email: (userMail, token, protHost) => reset(userMail, token, protHost, 'email')
 };
 
 /*
 Send registration or reset email with token.
 */
-function reset(userMail, token, hostname, type='registration') {
+function reset(userMail, token, protHost, type='registration') {
 
   //console.log('sendmail::reset', userMail, token, type, secrets.mail.vceEmail, secrets.mail.vcePassW)
-  console.log('sendmail::reset', secrets.mail.vceEmail, secrets.mail.vcePassW);
+  console.log('sendmail::reset', protHost, secrets.mail.vceEmail, secrets.mail.vcePassW);
+
   var transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
@@ -24,19 +25,19 @@ function reset(userMail, token, hostname, type='registration') {
     from: secrets.mail.vceEmail
   });
 
-  var url = `<a href=http://${hostname}/user/confirm/registration?token=${token}>Confirm ${config.app_servicename} Registration</a>`;
+  var url = `<a href=${protHost}/user/confirm/registration?token=${token}>Confirm ${config.app_servicename} Registration</a>`;
   var sub = `${config.app_servicename} Registration`;
   if (type == 'reset') {
-    url = `<a href=http://${hostname}/user/confirm/reset?token=${token}>Confirm ${config.app_servicename} Password Change</a>`;
+    url = `<a href=${protHost}/user/confirm/reset?token=${token}>Confirm ${config.app_servicename} Password Change</a>`;
     sub = `${config.app_servicename} Password Reset`;
   }
   if (type == 'email') {
-    url = `<a href=http://${hostname}/user/confirm/email?token=${token}>Confirm ${config.app_servicename} Email Change</a>`;
+    url = `<a href=${protHost}/user/confirm/email?token=${token}>Confirm ${config.app_servicename} Email Change</a>`;
     sub = `${config.app_servicename} Email Change`;
   }
 
   var mailOptions = {
-    from: config.vceEmail,
+    from: secrets.mail.vceEmail,
     to: userMail,
     subject: sub,
     html: url

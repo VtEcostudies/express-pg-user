@@ -9,10 +9,10 @@ CREATE TYPE user_role_type AS ENUM
 CREATE TABLE IF NOT EXISTS users
 (
     "userId" SERIAL NOT NULL,
-    "userName" text COLLATE pg_catalog."default" NOT NULL,
+    username text COLLATE pg_catalog."default" NOT NULL,
     email text COLLATE pg_catalog."default" NOT NULL,
     hash text COLLATE pg_catalog."default" NOT NULL,
-		role user_role_type DEFAULT 'guest'::user_role_type,
+		userrole user_role_type DEFAULT 'guest'::user_role_type,
     "firstName" text COLLATE pg_catalog."default" NOT NULL,
     "lastName" text COLLATE pg_catalog."default" NOT NULL,
     "middleName" text COLLATE pg_catalog."default",
