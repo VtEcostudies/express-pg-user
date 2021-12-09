@@ -1,7 +1,7 @@
 const expressJwt = require('express-jwt');
 const config = require('../config').config;
 const secrets = require('../secrets').secrets
-const userService = require('./user_service_pg');
+//const userService = require('./user_service_pg');
 
 module.exports = expJwt;
 
@@ -36,6 +36,8 @@ function expJwt() {
   ];
   openRoutes = openRoutes.concat(config.openRoutes); //get application-specific openRoutes from config.js
 
+  console.log('exp_jwt::expJwt | openRoutes', openRoutes);
+
   return expressJwt({ secret, algorithms, isRevoked }).unless({
         path: openRoutes
     });
@@ -56,13 +58,16 @@ async function isRevoked(req, payload, done) {
                 req.body:[${Object.keys(req.body)}] [${Object.values(req.body)}]
                 payload:[${Object.keys(payload)}] [${Object.values(payload)}]`
                 );
-
-    if (payload.sub) {
+/*
+    if (payload.sub) { //the old, angular way
       req.user = await userService.getByUserId(payload.sub);
     }
+*/
+    payload.now = Date.now();
+    req.user = payload;
 
     // revoke token if user no longer exists or not found
-    if (!req.user) {
+    if (!req.user.userId) {
         return done(null, true);
     }
 
