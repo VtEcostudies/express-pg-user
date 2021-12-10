@@ -9,12 +9,33 @@ module.exports = auth_token_handler;
   https://stackoverflow.com/questions/34589272/how-to-set-authorization-headers-with-nodejs-and-express
 */
 function auth_token_handler(req, res, next) {
-  const token = req.headers.authorization || req.cookies.login;
+  //console.log('auth_token_handler | req.headers:', req.headers);
+  //console.log('auth_token_handler | req.cookies:', req.cookies);
+  var found = match_route(req);
+
+  if (found) { //this is an open route: auth not required
+      verify(req) //find the token for user login info
+        .then(payload => req.user = payload)
+        .catch(err => {}); //do nothing on openRoute token error
+      next();
+    } else { //this is a protected route: auth required
+      verify(req)
+        .then(payload => {
+          req.user = payload;
+          next();
+        })
+        .catch(err => { //token verify failed
+          next(err);
+        })
+    }
+};
+
+function match_route(req) {
   const route = req.baseUrl + req.path;
-  console.log('auth_token_handler | req.headers:', req.headers);
-  console.log('auth_token_handler | req.cookies:', req.cookies);
-  console.log('auth_token_handler | req.baseUrl + req.path:', req.baseUrl + req.path);
-  //match open paths. call next(err) to stop propgation...
+  var match, found = null;
+
+  console.log('auth_token_handler::find_route | req.baseUrl + req.path:', route);
+
   var openRoutes = [ //add standard user openRoutes here
     '/user/authenticate',
     '/user/login',
@@ -30,31 +51,15 @@ function auth_token_handler(req, res, next) {
   ];
   openRoutes = openRoutes.concat(config.openRoutes); //get application-specific openRoutes from config.js
 
-  var match, found = null;
   openRoutes.forEach((ele, idx, arr) => {
-    match = route.match(ele);
-    //if (match) {
+    //match = route.match(ele); if (match) {
     if (route == ele) {
       found = route
-      console.log(`Found ${route} in openRoutes[${idx}]: ${ele} | `, match);
+      console.log(`auth_token_handler::findRoute | Found '${route}' at openRoutes[${idx}]:`, ele);
     };
   });
 
-  if (found) {
-      verify(req)
-        .then(payload => req.user = payload)
-        .catch(err => {}); //do nothing on openRoute token error
-      next();
-    } else {
-      verify(req)
-        .then(payload => {
-          req.user = payload;
-          next();
-        })
-        .catch(err => {
-          next(err);
-        })
-    }
+  return found;
 };
 
 function verify(req) {
@@ -69,9 +74,9 @@ function verify(req) {
 
   return new Promise(async (resolve, reject) => {
     if (!token) {
-      var tokerr = new Error(`No authorization header. No 'cookies.login' token.`);
-      tokerr.status = 401;
-      reject(tokerr);
+      var notoke = new Error(`No authorization header. No login token.`);
+      notoke.status = 401;
+      reject(notoke);
     } else {
       try {
         await jwt.verify(token, secrets.token.secret, (err, payload) => {

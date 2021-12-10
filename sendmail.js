@@ -4,8 +4,8 @@ const secrets = require('../secrets').secrets;
 
 module.exports = {
     register: (userMail, token, protHost) => reset(userMail, token, protHost, 'registration'),
-    reset: (userMail, token, protHost) => reset(userMail, token, protHost, 'reset'),
-    new_email: (userMail, token, protHost) => reset(userMail, token, protHost, 'email')
+    reset_password: (userMail, token, protHost) => reset(userMail, token, protHost, 'reset'),
+    reset_email: (userMail, token, protHost) => reset(userMail, token, protHost, 'email')
 };
 
 /*

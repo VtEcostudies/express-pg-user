@@ -17,11 +17,11 @@ module.exports = {
     getRoles,
     register,
 //    check,
-    update,
-    reset,
+    reset_password,
+    reset_email,
     verify,
     confirm,
-    new_email,
+    update,
     delete: _delete
 };
 
@@ -36,20 +36,24 @@ for (i=0; i<tables.length; i++) {
 }
 
 /*
-Authenticate user. Handle both registration, reset, and new_email confirmations
-and the regular login process.
-Registration, reset, and new_email confirmations are different only in that a
-token is in the body. To succeed, the incoming token must match the db token,
-which was inserted during the reset operation. When a token is preset, query
-the user db with additional where clause "token" parameter, and on successful
-auth set token=null and status='confirmed'.
+Authenticate user.
+Handle registration, reset_password, and reset_email confirmations and the
+regular login process.
+
+Registration, reset_password, and reset_email confirmations are different only
+in that a token is in the body (or with pug ui in a cookie). To succeed, the
+incoming token must match the db token, which was inserted during the reset
+operation. When a token is preset, query the user db with additional where
+clause "token" parameter, and on successful auth set token=null and status='confirmed'.
 Originally, we filtered user selection to 'where token is null'. However, this
 did not allow us to return users whose status is not confirmed, which prevents
 us from returning an instructive error.
 */
 async function authenticate(req) {
     body = req.body;
-    if (!req.body.token && req.cookies) {req.body.token = req.cookies['reset'];}
+    if (!req.body.token && req.cookies) { //IMPORTANT: with pug ui reset flow, a reset token from email URL is passed in req.cookies[type]
+      req.body.token = req.cookies['reset'] || req.cookies['email'];
+    }
     return new Promise(async (resolve, reject) => {
         if (!body.username || !body.password) {reject(new Error('Username and password are required.'));}
         var token = null; //authentiction token. return if successful login.
@@ -64,7 +68,7 @@ async function authenticate(req) {
         const user = sres.rows[0];
         console.log(`users.pg.service.authenticate | user: `, user);
         if (user && bcrypt.compareSync(body.password, user.hash)) {
-            if (user.status=='confirmed' || body.token) { //confirmed, registration token and new_email token
+            if (user.status=='confirmed' || body.token) { //confirmed, registration token and reset_email token
               delete user.hash; //never return hash via API
               delete user.token;
               //token = jwt.sign({ sub: user.userId, username: user.username, role: user.userrole }, secrets.token.secret, { expiresIn: secrets.token.loginExpiry });
@@ -87,7 +91,7 @@ async function authenticate(req) {
                 case 'reset':
                   message += 'Please complete the password reset process using your emailed reset token.';
                   break;
-                case 'new_email':
+                case 'reset_email':
                   message += 'Please complete the change of email process using your new email token.';
                   break;
                 case 'invalid':
@@ -117,7 +121,7 @@ async function getAll(params={}) {
     const text = `
     SELECT * FROM users
     ${where.text} ${orderClause};`;
-    console.log(`users.service.pg.js getAll`, text, where.values);
+    console.log(`user_service_pg getAll`, text, where.values);
     try {
         var res = await query(text, where.values);
         return res.rows;
@@ -138,7 +142,7 @@ async function getPage(page, params={}) {
     }
     var where = pgUtil.whereClause(params, [], 'WHERE', 'users'); //whereClause filters output against users.columns
     const text = `select (select count(*) from users ${where.text}),* from users ${where.text} ${orderClause} offset ${offset} limit ${pageSize};`;
-    console.log(`users.service.pg.js getPage`, text, where.values);
+    console.log(`user_service_pg getPage`, text, where.values);
     try {
         var res = await query(text, where.values);
         return res.rows;
@@ -162,11 +166,11 @@ async function getByUserId(userId) {
             delete res.rows[0].hash;
             return res.rows[0];
         } else {
-            console.log(`users.service.pg.js::getByUserId ${userId} NOT Found`);
+            console.log(`user_service_pg::getByUserId ${userId} NOT Found`);
             return {};
         }
     } catch(err) {
-        console.log(`users.service.pg.js::getByUserId error`, err);
+        console.log(`user_service_pg::getByUserId error`, err);
         throw err;
     }
 }
@@ -178,17 +182,17 @@ async function getByUserName(username) {
             delete res.rows[0].hash;
             return res.rows[0];
         } else {
-            console.log(`users.service.pg.js::getByUserId ${id} NOT Found`);
+            console.log(`user_service_pg::getByUserName ${username} NOT Found`);
             return {};
         }
     } catch(err) {
-        console.log(`users.service.pg.js::getByUserId error`, err);
+        console.log(`user_service_pg::getByUserName error`, err);
         throw err;
     }
 }
 
 async function getRoles() {
-  return await query(`select * from vprole`);
+  return await query(`select * from role`);
 }
 
 /*
@@ -210,13 +214,13 @@ function register(body, hostname) {
         console.log(text, queryColumns.values);
         query(text, queryColumns.values)
           .then(res => {
-            console.log('users.service.pg.js::register | rowCount, userId ', res.rowCount, res.rows[0].userId);
+            console.log('user_service_pg::register | rowCount, userId ', res.rowCount, res.rows[0].userId);
             sendmail.register(body.email, body.token, hostname)
               .then(ret => {resolve(ret);})
               .catch(err => {reject(err)});
           })
           .catch(err => {
-              console.log('users.service.pg.js::register | ERROR ', err.message);
+              console.log('user_service_pg::register | ERROR ', err.message);
               if (err.code == 23505 && err.constraint == 'vpuser_pkey') {
                   err.name = 'Uniqueness Constraint Violation';
                   err.hint = 'Please choose a different username.';
@@ -238,98 +242,66 @@ function register(body, hostname) {
 }
 
 /*
-  Update of user profile data.
-  Password resets are done via the reset flow.
-  User values that can only be done by administrative function:
-    - username
-    - alias
-    - role
-    - status
-  NOTE: checking userrole=='admin' should be sufficiently secure. We embed
-  user object from db query in the auth jwt, which is not easily decoded. API access is only
-  possible with auth jwt, and user.userrole cannot be set another way.
-  If this is not secure enough, we could query the db for login userrole here
-  to double-check.
-*/
-async function update(id, body, user) {
-
-    delete body.password; //don't allow password update here. only use reset flow.
-    if (user.role != 'admin') { //only allow admins to set these values.
-      delete body.username;
-      delete body.userrole;
-      delete body.alias;
-      delete body.status;
-    }
-
-    /*
-      We receive Alias as an array, and store in users but also in a separate
-      table, alias. A database TRIGGER handles those insert/updates in postgres.
-    */
-    const queryColumns = pgUtil.parseColumns(body, 2, [id], [], 'users');
-    const text = `update users set (${queryColumns.named}) = (${queryColumns.numbered}) where "userId"=$1;`;
-    console.log(text, queryColumns.values);
-    return await query(text, queryColumns.values);
-}
-
-/*
-  Reset user password by email. Call this route to set a new user password before
-  sending a reset email/token. This route will invalidate the old password and
-  send an email with reset link containing a reset token.
+  User password reset flow.
+  Call this route to set a new user password before sending a reset email/token.
+  This route will invalidate the old password and send an email with reset link
+  containing a reset token.
   - verify user email. if found:
   - set db reset token (for comparison on /confirm route)
   - send email with url and reset token
 */
-function reset(email, hostname) {
+function reset_password(email, hostname) {
     return new Promise((resolve, reject) => {
-      const token = jwt.sign({ reset:true, email:email }, secrets.token.secret, { expiresIn: secrets.token.resetExpiry });
+      const token = jwt.sign({ reset_password:true, email:email }, secrets.token.secret, { expiresIn: secrets.token.resetExpiry });
       text = `update users set token=$2,status='reset' where "email"=$1 returning "userId",email,token;`;
       console.log(text, [email, token]);
       query(text, [email, token])
         .then(res => {
-          console.log('users.service.pg.js::reset | rowCount ', res.rowCount);
+          console.log('user_service_pg::reset_password | rowCount ', res.rowCount);
           if (res.rowCount == 1) {
-            sendmail.reset(res.rows[0].email, res.rows[0].token, hostname)
+            sendmail.reset_password(res.rows[0].email, res.rows[0].token, hostname)
               .then(ret => {resolve(ret);})
               .catch(err => {reject(err)});
           } else {
-            console.log('users.service.pg.js::reset | ERROR', `email ${email} NOT found.`);
+            console.log('user_service_pg::reset_password | ERROR', `email ${email} NOT found.`);
             reject(new Error(`email ${email} NOT found.`));
           }
         })
         .catch(err => {
-          console.log('users.service.pg.js::reset | ERROR ', err.message);
+          console.log('user_service_pg::reset_password | ERROR ', err.message);
           reject(err.message);
         });
     });
 }
 
 /*
-  Change user email. Call this route to set a new_email token before
-  sending a new_email email/token. This route will emulate the registration
+  User email reset flow.
+  Change user email. Call this route to set a reset_email token before
+  sending a reset_email email/token. This route will emulate the registration
   flow, requiring that the user logs in from the new email token.
   - verify user email. if found:
-  - set db new_email token (for comparison on /authenticate route)
-  - send email with url and new_email token
+  - set db reset_email token (for comparison on /authenticate route)
+  - send email with url and reset_email token
 */
-function new_email(id, email, hostname) {
+function reset_email(userId, email, hostname) {
     return new Promise((resolve, reject) => {
-      const token = jwt.sign({ new_email:true, email:email }, secrets.token.secret, { expiresIn: secrets.token.resetExpiry });
-      text = `update users set email=$2,token=$3,status='new_email' where id=$1 returning id,email,token;`;
-      console.log(text, [id, email, token]);
-      query(text, [id, email, token])
+      const token = jwt.sign({ reset_email:true, email:email }, secrets.token.secret, { expiresIn: secrets.token.resetExpiry });
+      text = `update users set email=$2,token=$3,status='reset_email' where "userId"=$1 returning "userId",email,token;`;
+      console.log(text, [userId, email, token]);
+      query(text, [userId, email, token])
         .then(res => {
-          console.log('users.service.pg.js::new_email | rowCount ', res.rowCount);
+          console.log('user_service_pg::reset_email | rowCount ', res.rowCount);
           if (res.rowCount == 1) {
-            sendmail.new_email(res.rows[0].email, res.rows[0].token, hostname)
+            sendmail.reset_email(res.rows[0].email, res.rows[0].token, hostname)
               .then(ret => {resolve(ret);})
               .catch(err => {reject(err)});
           } else {
-            console.log('users.service.pg.js::new_email | ERROR', `email ${email} NOT found.`);
+            console.log('user_service_pg::reset_email | ERROR', `email ${email} NOT found.`);
             reject(new Error(`email ${email} NOT found.`));
           }
         })
         .catch(err => {
-          console.log('users.service.pg.js::new_email | ERROR ', err.message);
+          console.log('user_service_pg::reset_email | ERROR ', err.message);
           reject(err.message);
         });
     });
@@ -339,10 +311,11 @@ function new_email(id, email, hostname) {
   Verify a valid token that maps to a user in the db having the included email
   and token.
 
-  We handle 2 types of tokens: registration and reset. When the token is parsed,
-  it will include a payload with either reset=true or registration=true and an
-  email address. By receiving this token and successfully decoding, this function
-  verifies that we have a valid user matching those values in the database.
+  We handle 3 types of tokens: registration, reset_password, and reset_email.
+  When the token is parsed, it will include a payload with either reset=true or
+  registration=true and an email address. By receiving this token and successfully
+  decoding, this function verifies that we have a valid user matching those values
+  in the database.
 
   The result from success here should be a one of the following:
 
@@ -356,12 +329,12 @@ function new_email(id, email, hostname) {
     to the confirm function.
 */
 function verify(token) {
-  console.log('users.service.pg.js::verify | token', token);
+  console.log('user_service_pg::verify | token', token);
 
   return new Promise((resolve, reject) => {
     jwt.verify(token, secrets.token.secret, function(err, payload) {
       if (err) {
-        console.log('users.service.pg.js::verify | ERROR', err);
+        console.log('user_service_pg::verify | ERROR', err);
         reject(err);
       }
       payload.now = Date.now();
@@ -396,12 +369,12 @@ function confirm(token, password) {
   // hash password
   var hash = bcrypt.hashSync(password, 10);
 
-  console.log('users.service.pg.js::confirm | inputs', token, hash);
+  console.log('user_service_pg::confirm | inputs', token, hash);
 
   return new Promise((resolve, reject) => {
     jwt.verify(token, secrets.token.secret, function(err, payload) {
       if (err) {
-        console.log('users.service.pg.js::confirm | ERROR', err);
+        console.log('user_service_pg::confirm | ERROR', err);
         reject(err);
       }
       payload.now = Date.now();
@@ -427,6 +400,41 @@ function confirm(token, password) {
   });
 }
 
-async function _delete(id) {
-    return await query(`delete from users where "id"=$1;`, [id]);
+/*
+  Update user profile data.
+  Password resets are done via the reset_password flow.
+  Email changes are done via the reset_email flow.
+  User values that can only be done by administrative function:
+    - username
+    - alias
+    - role
+    - status
+  NOTE: checking userrole=='admin' should be sufficiently secure. We embed
+  user object from db query in the auth jwt, which is not easily decoded. API access is only
+  possible with auth jwt, and user.userrole cannot be set another way.
+  If this is not secure enough, we could query the db for login userrole here
+  to double-check.
+*/
+async function update(userId, body, user) {
+
+    delete body.password; //don't allow password update here. only use reset_password flow.
+    if (user.role != 'admin') { //only allow admins to set these values.
+      delete body.username;
+      delete body.userrole;
+      delete body.alias;
+      delete body.status;
+    }
+
+    /*
+      We receive Alias as an array, and store in users but also in a separate
+      table, alias. A database TRIGGER handles those insert/updates in postgres.
+    */
+    const queryColumns = pgUtil.parseColumns(body, 2, [userId], [], 'users');
+    const text = `update users set (${queryColumns.named}) = (${queryColumns.numbered}) where "userId"=$1;`;
+    console.log(text, queryColumns.values);
+    return await query(text, queryColumns.values);
+}
+
+async function _delete(userId) {
+    return await query(`delete from users where "userId"=$1;`, [userId]);
 }
