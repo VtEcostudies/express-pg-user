@@ -13,8 +13,8 @@ Send registration or reset email with token.
 */
 function reset(userMail, token, protHost, type='registration') {
 
-  //console.log('sendmail::reset', userMail, token, type, secrets.mail.vceEmail, secrets.mail.vcePassW)
-  console.log('sendmail::reset', protHost, secrets.mail.vceEmail, secrets.mail.vcePassW);
+  console.log(`sendmail::reset | userMail: ${userMail} | token: ${token} | type: ${type} `);
+  console.log(`sendmail::reset | host: ${protHost} | sending-email: ${secrets.mail.vceEmail} | sending-password: ${secrets.mail.vcePassW}`);
 
   var transporter = nodemailer.createTransport({
     service: 'gmail',
@@ -43,7 +43,7 @@ function reset(userMail, token, protHost, type='registration') {
     html: url
   };
 
-  console.log('sendMail::reset', mailOptions);
+  console.log('sendMail::reset | mailOptions:', mailOptions);
 
   /*
   To make sendmail work, log-in to the sending gmail account and turn-on 'less secure app access':
@@ -52,10 +52,10 @@ function reset(userMail, token, protHost, type='registration') {
   return new Promise(function(resolve, reject) {
       transporter.sendMail(mailOptions, function(err, info) {
       if (err) {
-        console.log(err);
+        console.log(`sendmail::reset | transporter.sendMail ERROR:`, err.message);
         reject(err);
       } else {
-        console.log('Email sent: ' + info.response);
+        console.log('sendmail::reset | transporter.sendMail SUCCESS | Email sent: ' + info.response);
         resolve(info);
       }
     });

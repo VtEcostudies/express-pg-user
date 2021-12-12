@@ -182,17 +182,24 @@ function register(body, hostname) {
 
         var queryColumns = pgUtil.parseColumns(body, 1, [], [], 'users');
         text = `insert into users (${queryColumns.named}) values (${queryColumns.numbered}) returning "userId";`;
-        console.log(text, queryColumns.values);
+        console.log(`user_service_pg::register | INSERT query:`, text, queryColumns.values);
         query(text, queryColumns.values)
           .then(res => {
-            console.log('user_service_pg::register | rowCount, userId ', res.rowCount, res.rows[0].userId);
+            console.log(`user_service_pg::register | rowCount:${res.rowCount}, userId:${res.rows[0].userId}`);
             sendmail.register(body.email, body.token, hostname)
               .then(ret => {resolve(ret);})
-              .catch(err => {reject(err)});
+              .catch(err => { //if sendmail error is due to invalid email, we need to delete the user b/c this orphans the username w/o a valid email
+                console.log(`user_service_pg::register::sendmail | ERROR:`, err.message);
+                text = `delete from users where email=$1`;
+                console.log(`user_service_pg::register::sendmail | DELETE query:`, text, body.email);
+                query(text, [body.email])
+                  .then(ret => reject(err))
+                  .catch(err_del => reject({send: err, delete: err_del}));
+              });
           })
           .catch(err => {
               console.log('user_service_pg::register | ERROR ', err.message);
-              if (err.code == 23505 && err.constraint == 'vpuser_pkey') {
+              if (err.code == 23505 && err.constraint == 'user_pkey') {
                   err.name = 'Uniqueness Constraint Violation';
                   err.hint = 'Please choose a different username.';
                   err.message = `username '${body.username}' is already taken.`;
