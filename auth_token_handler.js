@@ -37,6 +37,9 @@ function match_route(req) {
   console.log('auth_token_handler::find_route | req.baseUrl + req.path:', route);
 
   var openRoutes = [ //add standard user openRoutes here
+    '/user/db/create',
+    '/user/db/init',
+    '/user/db/columns',
     '/user/authenticate',
     '/user/login',
     '/user/logout',

@@ -1,59 +1,76 @@
 const dbPath = '../database';
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const config = require('../config').config;
 const secrets = require('../secrets').secrets;
 const db = require(`${dbPath}/db_postgres`);
 const query = db.query;
 const pgUtil = require(`${dbPath}/db_pgutil`);
 const sendmail = require('./sendmail');
+const userModel = require('./user_model_pg');
+const tables = ["users", "alias"]; //setColumns tables
+
+setColumns(); //on app start
 
 module.exports = {
+    setColumns,
+    getColumns,
     authenticate,
-//    getColumns,
+    login,
+    register,
+    reset_password,
+    reset_email,
+    verify,
+    confirm,
+    check,
     getAll,
     getPage,
     getByUserId,
     getByUserName,
     getRoles,
-    register,
-//    check,
-    reset_password,
-    reset_email,
-    verify,
-    confirm,
     update,
     delete: _delete
 };
 
-const tables = [
-  "users",
-  "alias"
-];
-for (i=0; i<tables.length; i++) {
-  pgUtil.setColumns(tables[i]) //run it once on init
-    .then(res => {return res;})
-    .catch(err => {console.log(`users.service.pg.pgUtil.getColumns | table:${tables[i]} | error: `, err.message);});
+//pre-populate stored array
+function setColumns() {
+  for (i=0; i<tables.length; i++) {
+    return pgUtil.setColumns(tables[i]); //run it once on init. returns a promise. on success it returns a custom object: {tableName:, columns:}
+/*
+      .then(res => {return res;})
+      .catch(err => {
+        console.log(`users.service.pg.pgUtil.getColumns | table:${tables[i]} | error: `, err.message);
+        return err;
+      });
+*/
+  }
+}
+
+function getColumns() {
+  for (i=0; i<tables.length; i++) {
+    return pgUtil.getColumns(tables[i]);
+  }
 }
 
 /*
-Authenticate user.
-Handle registration, reset_password, and reset_email confirmations and the
-regular login process.
+  Authenticate user.
+  Handle registration, reset_password, and reset_email confirmations and the
+  regular login process.
 
-Registration, reset_password, and reset_email confirmations are different only
-in that a token is in the body (or with pug ui in a cookie). To succeed, the
-incoming token must match the db token, which was inserted during the reset
-operation. When a token is preset, query the user db with additional where
-clause "token" parameter, and on successful auth set token=null and status='confirmed'.
-Originally, we filtered user selection to 'where token is null'. However, this
-did not allow us to return users whose status is not confirmed, which prevents
-us from returning an instructive error.
+  Registration, reset_password, and reset_email confirmations are different only
+  in that a token is in the body (or with pug ui in a cookie). To succeed, the
+  incoming token must match the db token, which was inserted during the reset
+  operation. When a token is preset, query the user db with additional where
+  clause "token" parameter, and on successful auth set token=null and status='confirmed'.
+  Originally, we filtered user selection to 'where token is null'. However, this
+  did not allow us to return users whose status is not confirmed, which prevents
+  us from returning an instructive error.
 */
 async function authenticate(req) {
-    body = req.body;
-    if (!req.body.token && req.cookies) { //IMPORTANT: with pug ui reset flow, a reset token from email URL is passed in req.cookies[type]
-      req.body.token = req.cookies['reset'] || req.cookies['email'];
+    if (!req.body.token && req.cookies) { //IMPORTANT: with pug ui register/reset/email flow, a token from email URL is passed in req.cookies[type]
+      req.body.token = req.cookies['register'] || req.cookies['reset'] || req.cookies['email'];
     }
+    body = req.body;
     return new Promise(async (resolve, reject) => {
         if (!body.username || !body.password) {reject(new Error('Username and password are required.'));}
         var token = null; //authentiction token. return if successful login.
@@ -89,13 +106,15 @@ async function authenticate(req) {
                   message += 'Please complete the registration process using your emailed registration token.';
                   break;
                 case 'reset':
+                case 'reset_password':
                   message += 'Please complete the password reset process using your emailed reset token.';
                   break;
+                case 'new_email':
                 case 'reset_email':
                   message += 'Please complete the change of email process using your new email token.';
                   break;
                 case 'invalid':
-                  message = 'This user is invalid. Please contact a VPAtlas administrator.';
+                  message = `This user is invalid. Please contact a ${config.app_servicename} administrator.`;
                   break;
                 }
               reject(new Error(message));
@@ -104,95 +123,47 @@ async function authenticate(req) {
             if (token) {
               reject(new Error('Invalid token.'));
             } else {
-              reject(new Error('Username or password is incorrect.'));
+              reject(new Error('Username and password do not match.'));
             }
         }
     });
 }
 
-async function getAll(params={}) {
-    var orderClause = 'ORDER BY "updatedAt" DESC';
-    if (params.orderBy) {
-        var col = params.orderBy.split("|")[0];
-        var dir = params.orderBy.split("|")[1]; dir = dir ? dir : '';
-        orderClause = `ORDER BY "${col}" ${dir}`;
-    }
-    const where = pgUtil.whereClause(params, [], 'WHERE', 'users');
-    const text = `
-    SELECT * FROM users
-    ${where.text} ${orderClause};`;
-    console.log(`user_service_pg getAll`, text, where.values);
-    try {
-        var res = await query(text, where.values);
-        return res.rows;
-    } catch(err) {
-        throw err;
-    }
-}
-
-async function getPage(page, params={}) {
-    page = Number(page) ? Number(page) : 1;
-    const pageSize = Number(params.pageSize) ? Number(params.pageSize) : 10;
-    const offset = (page-1) * pageSize;
-    var orderClause = '';
-    if (params.orderBy) {
-        var col = params.orderBy.split("|")[0];
-        var dir = params.orderBy.split("|")[1]; dir = dir ? dir : '';
-        orderClause = `order by "${col}" ${dir}`;
-    }
-    var where = pgUtil.whereClause(params, [], 'WHERE', 'users'); //whereClause filters output against users.columns
-    const text = `select (select count(*) from users ${where.text}),* from users ${where.text} ${orderClause} offset ${offset} limit ${pageSize};`;
-    console.log(`user_service_pg getPage`, text, where.values);
-    try {
-        var res = await query(text, where.values);
-        return res.rows;
-    } catch(err) {
-        throw err;
-    }
-}
-
 /*
- * NOTE: tried handling promise, here, with .catch, .then. Doesn't work
- * with await. Neither does it appear to work without await. See commented
- * code below.
- *
- * It does appear that await is meant to be used with the old-school try {}
- * catch {} formulation.
- */
-async function getByUserId(userId) {
-    try {
-        var res = await query(`select * from users where "userId"=$1;`, [userId]);
-        if (res.rowCount == 1) {
-            delete res.rows[0].hash;
-            return res.rows[0];
-        } else {
-            console.log(`user_service_pg::getByUserId ${userId} NOT Found`);
-            return {};
-        }
-    } catch(err) {
-        console.log(`user_service_pg::getByUserId error`, err);
-        throw err;
-    }
-}
+  Perform a simple login based only on username and password.
 
-async function getByUserName(username) {
-    try {
-        var res = await query(`select * from users where "username"=$1;`, [username]);
-        if (res.rowCount == 1) {
-            delete res.rows[0].hash;
-            return res.rows[0];
-        } else {
-            console.log(`user_service_pg::getByUserName ${username} NOT Found`);
-            return {};
-        }
-    } catch(err) {
-        console.log(`user_service_pg::getByUserName error`, err);
-        throw err;
-    }
-}
+  This ignores any existing reset tokens and simply verifies username and
+  password for a confirmed user. It generates a new login token and returns
+  a user object and new login token.
 
-async function getRoles() {
-  return await query(`select * from role`);
+  Inputs:
+    req.body.username
+    req.body.password
+*/
+function login(req) {
+  var body = req.body;
+  var token = null;
+  return new Promise(async (resolve, reject) => {
+      if (!body.username || !body.password) {reject(new Error('Username and password are required.'));}
+      var select = `select * from users where username=$1;`;
+      var args = [body.username];
+      console.log(`user_service_pg::login | query:`, select, args);
+      const sres = await query(select, args);
+      const user = sres.rows[0];
+      console.log(`user_service_pg::login | user: `, user);
+      if (user && bcrypt.compareSync(body.password, user.hash)) {
+          if (user.status=='confirmed') {
+            delete user.hash; //never return hash via API
+            delete user.token;
+            token = jwt.sign(user, secrets.token.secret, { expiresIn: secrets.token.loginExpiry });
+            resolve({user: user, token: token});
+          } else {
+            reject(new Error(`Invalid user status ${user.status}.`));
+          }
+      } else {
+        reject(new Error(`Username and password do not match.`));
+      }
+  });
 }
 
 /*
@@ -361,9 +332,9 @@ function verify(token) {
 }
 
 /*
-  Confirm a password reset by verifying a user from the token and an email parsed
-  from the incoming token. If that combination is verified, update the user's
-  password.
+  Confirm a new registration or password reset by verifying a user from the
+  token and an email parsed from the incoming token. If that combination is
+  verified, update the user's password.
 */
 function confirm(token, password) {
   // hash password
@@ -398,6 +369,103 @@ function confirm(token, password) {
         });
     });
   });
+}
+
+/*
+  This is a legacy of the vpatlas API system. I think its purpose is to have an
+  empty route to call to check the validity of the login token.
+
+  If a request gets here, it succeeded because it made it past the auth middelware.
+*/
+function check(req, res) {
+  return new Promise((resolve, reject) => {
+    resolve(true);
+  })
+}
+
+async function getAll(params={}) {
+    var orderClause = 'ORDER BY "updatedAt" DESC';
+    if (params.orderBy) {
+        var col = params.orderBy.split("|")[0];
+        var dir = params.orderBy.split("|")[1]; dir = dir ? dir : '';
+        orderClause = `ORDER BY "${col}" ${dir}`;
+    }
+    const where = pgUtil.whereClause(params, [], 'WHERE', 'users');
+    const text = `
+    SELECT * FROM users
+    ${where.text} ${orderClause};`;
+    console.log(`user_service_pg::getAll`, text, where.values);
+    try {
+        var res = await query(text, where.values);
+        return res.rows;
+    } catch(err) {
+        throw err;
+    }
+}
+
+async function getPage(page, params={}) {
+    page = Number(page) ? Number(page) : 1;
+    const pageSize = Number(params.pageSize) ? Number(params.pageSize) : 10;
+    const offset = (page-1) * pageSize;
+    var orderClause = '';
+    if (params.orderBy) {
+        var col = params.orderBy.split("|")[0];
+        var dir = params.orderBy.split("|")[1]; dir = dir ? dir : '';
+        orderClause = `order by "${col}" ${dir}`;
+    }
+    var where = pgUtil.whereClause(params, [], 'WHERE', 'users'); //whereClause filters output against users.columns
+    const text = `select (select count(*) from users ${where.text}),* from users ${where.text} ${orderClause} offset ${offset} limit ${pageSize};`;
+    console.log(`user_service_pg::getPage`, text, where.values);
+    try {
+        var res = await query(text, where.values);
+        return res.rows;
+    } catch(err) {
+        throw err;
+    }
+}
+
+/*
+ * NOTE: tried handling promise, here, with .catch, .then. Doesn't work
+ * with await. Neither does it appear to work without await. See commented
+ * code below.
+ *
+ * It does appear that await is meant to be used with the old-school try {}
+ * catch {} formulation.
+ */
+async function getByUserId(userId) {
+    try {
+        var res = await query(`select * from users where "userId"=$1;`, [userId]);
+        if (res.rowCount == 1) {
+            delete res.rows[0].hash;
+            return res.rows[0];
+        } else {
+            console.log(`user_service_pg::getByUserId ${userId} NOT Found`);
+            return {};
+        }
+    } catch(err) {
+        console.log(`user_service_pg::getByUserId error`, err);
+        throw err;
+    }
+}
+
+async function getByUserName(username) {
+    try {
+        var res = await query(`select * from users where "username"=$1;`, [username]);
+        if (res.rowCount == 1) {
+            delete res.rows[0].hash;
+            return res.rows[0];
+        } else {
+            console.log(`user_service_pg::getByUserName ${username} NOT Found`);
+            return {};
+        }
+    } catch(err) {
+        console.log(`user_service_pg::getByUserName error`, err);
+        throw err;
+    }
+}
+
+async function getRoles() {
+  return await query(`select * from role`);
 }
 
 /*

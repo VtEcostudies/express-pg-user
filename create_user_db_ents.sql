@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS users
     username text COLLATE pg_catalog."default" NOT NULL,
     email text COLLATE pg_catalog."default" NOT NULL,
     hash text COLLATE pg_catalog."default" NOT NULL,
-		userrole user_role_type DEFAULT 'guest'::user_role_type,
+	userrole user_role_type DEFAULT 'guest'::user_role_type,
     "firstName" text COLLATE pg_catalog."default" NOT NULL,
     "lastName" text COLLATE pg_catalog."default" NOT NULL,
     "middleName" text COLLATE pg_catalog."default",
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS users
     alias text[] COLLATE pg_catalog."default",
     "createdAt" timestamp without time zone DEFAULT now(),
     "updatedAt" timestamp without time zone DEFAULT now(),
-    CONSTRAINT user_pkey PRIMARY KEY ("userName"),
+    CONSTRAINT user_pkey PRIMARY KEY (username),
     CONSTRAINT unique_email UNIQUE (email),
     CONSTRAINT user_id_unique_key UNIQUE ("userId")
 );
@@ -73,14 +73,15 @@ AS $BODY$
 DECLARE
 	alias text;
 BEGIN
-	DELETE FROM alias WHERE "aliasUserId"=NEW."userId";
-	RAISE NOTICE 'Alias Array %', NEW."alias";
-	FOR i IN array_lower(NEW.alias, 1) .. array_upper(NEW.alias, 1)
-	LOOP
-		RAISE NOTICE 'alias: %', NEW.alias[i];
-		INSERT INTO alias ("aliasUserId", "alias") VALUES (NEW."userId", NEW.alias[i]);
-	END LOOP;
-
+	IF alias THEN
+		DELETE FROM alias WHERE "aliasUserId"=NEW."userId";
+		RAISE NOTICE 'Alias Array %', NEW."alias";
+		FOR i IN array_lower(NEW.alias, 1) .. array_upper(NEW.alias, 1)
+		LOOP
+			RAISE NOTICE 'alias: %', NEW.alias[i];
+			INSERT INTO alias ("aliasUserId", "alias") VALUES (NEW."userId", NEW.alias[i]);
+		END LOOP;
+	END IF;
 	RETURN NEW;
 END;
 $BODY$;
